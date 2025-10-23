@@ -1,22 +1,24 @@
 import flwr as fl
 from flwr.common import Metrics
 
-def weighted_average(metrics: list[tuple[int, Metrics]]) -> Metrics:
+def weighted_average_perplexity(metrics: list[tuple[int, Metrics]]) -> Metrics:
     """
-    Função para agregar as métricas de avaliação (como acurácia).
-    Ela faz uma média ponderada da acurácia, baseada em quantos
-    exemplos de teste cada cliente usou.
+    Função de agregação para a Perplexidade (Perplexity).
+    Calcula a média ponderada da perplexidade enviada pelos clientes.
     """
-    accuracies = [num_examples * m["accuracy"] for num_examples, m in metrics]
+    
+    # Extrai a perplexidade (ppl) e o número de exemplos de cada cliente
+    perplexities = [num_examples * m["perplexity"] for num_examples, m in metrics]
     examples = [num_examples for num_examples, _ in metrics]
 
-    # Calcula a acurácia agregada
-    aggregated_accuracy = sum(accuracies) / sum(examples)
+    # Calcula a perplexidade agregada (média ponderada)
+    aggregated_perplexity = sum(perplexities) / sum(examples)
     
     # Retorna o dicionário de métricas para o servidor
-    return {"accuracy": aggregated_accuracy}
+    print(f"Perplexidade média agregada nesta rodada: {aggregated_perplexity:.4f}")
+    return {"perplexity": aggregated_perplexity}
 
-print("Iniciando o Servidor FL (Versão Corrigida) em 127.0.0.1:8080")
+print("Iniciando o Servidor FL (Versão GenAI) em 127.0.0.1:8080")
 print("Aguardando 10 clientes se conectarem...")
 
 # Define a estratégia (FedAvg)
@@ -27,23 +29,27 @@ strategy = fl.server.strategy.FedAvg(
     min_fit_clients=10,         # FORÇAR o uso de 10 clientes para treino
     min_evaluate_clients=10,    # FORÇAR o uso de 10 clientes para avaliação
     
-    # CORREÇÃO: Diz ao servidor como calcular a média da acurácia
-    evaluate_metrics_aggregation_fn=weighted_average, 
+    # DIZ AO SERVIDOR PARA USAR NOSSA NOVA FUNÇÃO DE MÉTRICA:
+    evaluate_metrics_aggregation_fn=weighted_average_perplexity, 
 )
 
 # Inicia o servidor!
 history = fl.server.start_server(
     server_address="127.0.0.1:8080", 
-    config=fl.server.ServerConfig(num_rounds=5),
+    config=fl.server.ServerConfig(num_rounds=3), # 3 rodadas (GenAI é mais lento)
     strategy=strategy,
 )
 
 print("Servidor finalizado.")
-print("\n--- Histórico de Acurácia ---")
-print(history.metrics_distributed)
+print("\n--- Histórico de Perplexidade (Menor é Melhor) ---")
 
-# Mostra a acurácia final
-final_round = history.metrics_distributed["accuracy"][-1][0]
-final_accuracy = history.metrics_distributed["accuracy"][-1][1]
-print(f"\nAcurácia final (Rodada {final_round}): {final_accuracy * 100:.2f}%")
-print(f"Baseline (Treino Centralizado) foi: 98.16%")
+# Extrai o histórico de métricas
+ppl_history = history.metrics_distributed.get("perplexity")
+
+if ppl_history:
+    print(ppl_history)
+    # Mostra a perplexidade final
+    final_round, final_ppl = ppl_history[-1]
+    print(f"\nPerplexidade final (Rodada {final_round}): {final_ppl:.4f}")
+else:
+    print("Nenhuma métrica de perplexidade foi registrada.")

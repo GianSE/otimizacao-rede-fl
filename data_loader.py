@@ -1,49 +1,98 @@
 import torch
-from torchvision import datasets, transforms
+from datasets import load_dataset
+from torch.utils.data import Dataset, DataLoader
 
-def load_mnist_data():
+# Vamos importar o tokenizer que definimos no passo 2
+from model_definition import load_model_and_tokenizer
+
+# Define um tamanho fixo para os blocos de texto
+BLOCK_SIZE = 128
+
+def load_data():
     """
-    Baixa e carrega o dataset MNIST, aplicando transformações.
+    Carrega o dataset 'blended_skill_talk', o processa e o tokeniza.
     """
     
-    # Define a transformação:
-    # 1. Converte a imagem para Tensor
-    # 2. Normaliza os dados (pixels de 0-1 para -1 a 1)
-    #    Isso ajuda o modelo a aprender mais rápido.
-    transform = transforms.Compose([
-        transforms.ToTensor(),
-        transforms.Normalize((0.5,), (0.5,)) 
-        # (0.5,) é a média e (0.5,) é o desvio padrão para 1 canal (preto e branco)
-    ])
+    # 1. Carrega o Tokenizer (do model_definition.py)
+    _, tokenizer = load_model_and_tokenizer()
+
+    # 2. Carrega o dataset 'blended_skill_talk'
+    print("Carregando o dataset 'blended_skill_talk'...")
+    raw_datasets = load_dataset("blended_skill_talk")
     
-    # Baixa o dataset de treino (se não existir na pasta ./data)
-    train_dataset = datasets.MNIST(
-        root='./data',  # Pasta onde os dados serão salvos
-        train=True,     # Indica que é o conjunto de treino
-        download=True,  # Baixa se não estiver na pasta 'root'
-        transform=transform # Aplica a transformação que definimos
+    def preprocess_function(examples):
+        """
+        Função de pré-processamento que será aplicada a cada amostra.
+        """
+        
+        separator = tokenizer.eos_token 
+        texts = []
+
+        # CORREÇÃO AQUI:
+        # Iteramos pelo batch usando os nomes corretos das colunas
+        # 'previous_utterance' (contexto) e 'free_messages' (conversa) são listas.
+        for i in range(len(examples["previous_utterance"])):
+            context_list = examples["previous_utterance"][i]
+            message_list = examples["free_messages"][i] # Corrigido de 'free_text' para 'free_messages'
+            
+            # Junta o contexto + a conversa em uma única lista
+            full_dialog_list = context_list + message_list
+            
+            # Transforma a lista de falas em um único texto
+            # ex: "Fala1<|eos|>" + "Fala2<|eos|>" + "Fala3<|eos|>"
+            full_text = separator.join(full_dialog_list) + separator
+            texts.append(full_text)
+
+        # 3. Tokeniza os textos
+        tokenized_output = tokenizer(
+            texts,
+            padding="max_length", # Preenche até o BLOCK_SIZE
+            truncation=True,      # Trunca se for maior que o BLOCK_SIZE
+            max_length=BLOCK_SIZE,
+            return_tensors="pt"
+        )
+        
+        # Os 'labels' são os próprios 'input_ids'
+        tokenized_output["labels"] = tokenized_output["input_ids"].clone()
+        
+        return tokenized_output
+
+    # 4. Aplica a função de pré-processamento
+    print("Processando e tokenizando o dataset...")
+    
+    column_names = raw_datasets["train"].column_names 
+    
+    tokenized_datasets = raw_datasets.map(
+        preprocess_function, 
+        batched=True, 
+        remove_columns=column_names 
     )
+
+    # 5. Define o formato final para o PyTorch
+    tokenized_datasets.set_format("torch")
+
+    # 6. Pega os splits de treino e teste
+    train_dataset = tokenized_datasets["train"]
+    test_dataset = tokenized_datasets["validation"] 
     
-    # Baixa o dataset de teste
-    test_dataset = datasets.MNIST(
-        root='./data',
-        train=False,    # Indica que é o conjunto de teste
-        download=True,
-        transform=transform
-    )
-    
-    print(f"Dataset MNIST carregado.")
-    print(f"Amostras de treino: {len(train_dataset)}")
-    print(f"Amostras de teste: {len(test_dataset)}")
+    print(f"Dataset processado. Amostras de treino: {len(train_dataset)}, Amostras de teste: {len(test_dataset)}")
     
     return train_dataset, test_dataset
 
 if __name__ == '__main__':
-    # Este código só roda quando você executa 'python data_loader.py'
-    # É bom para testar se o módulo funciona
-    train_data, test_data = load_mnist_data()
+    # Teste rápido para verificar se o data_loader funciona
     
-    # Exemplo: pegar a primeira imagem do treino
-    image, label = train_data[0]
-    print(f"Dimensões da 1ª imagem: {image.shape}") # Deve ser [1, 28, 28] (Canal, Altura, Largura)
-    print(f"Rótulo da 1ª imagem: {label}")
+    train_data, test_data = load_data()
+    
+    print("\n--- Testando o Data Loader ---")
+    print(f"Tipo de dados do treino: {type(train_data)}")
+    
+    primeira_amostra = train_data[0]
+    
+    print(f"\nChaves da primeira amostra: {primeira_amostra.keys()}")
+    print(f"Shape dos input_ids: {primeira_amostra['input_ids'].shape}") 
+    print(f"Shape dos labels: {primeira_amostra['labels'].shape}")     
+    
+    _, tokenizer = load_model_and_tokenizer()
+    print("\n--- Exemplo de Amostra (Decodificada) ---")
+    print(tokenizer.decode(primeira_amostra['input_ids'], skip_special_tokens=False))

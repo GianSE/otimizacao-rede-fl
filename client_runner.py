@@ -6,53 +6,60 @@ import sys
 import torch
 import flwr as fl
 
-# Importar suas peças
-from data_loader import load_mnist_data
-from data_partitioner import partition_data
-from model_definition import SimpleCNN
-from fl_client import FlowerClient # Reutilizando sua classe!
+# --- Importando todas as suas novas peças (V2) ---
+from data_loader import load_data
+from model_definition import load_model_and_tokenizer
+from fl_client import FlowerClient # Reutilizando sua classe V2!
 
 # --- 1. Pegar o ID do Cliente ---
-# Vamos passar o ID (0, 1, 2...) pela linha de comando
 if len(sys.argv) < 2:
     raise Exception("Erro: Forneça o ID do cliente (um número de 0 a 9)")
     
 CLIENT_ID = int(sys.argv[1])
-if not 0 <= CLIENT_ID < 10:
-     raise Exception("Erro: O ID do cliente deve estar entre 0 e 9")
+NUM_CLIENTS = 10
+
+if not 0 <= CLIENT_ID < NUM_CLIENTS:
+     raise Exception(f"Erro: O ID do cliente deve estar entre 0 e {NUM_CLIENTS-1}")
 
 print(f"[Cliente {CLIENT_ID}] Iniciando...")
 
 # --- 2. Definir Dispositivo ---
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-# --- 3. Carregar Modelo ---
-model = SimpleCNN().to(DEVICE)
+# --- 3. Carregar Modelo Pré-treinado ---
+print(f"[Cliente {CLIENT_ID}] Carregando modelo GenAI...")
+# Carregamos o modelo, mas não precisamos do tokenizer aqui
+model, _ = load_model_and_tokenizer()
+model.to(DEVICE)
 
-# --- 4. Carregar a Partição de Dados deste Cliente ---
-print(f"[Cliente {CLIENT_ID}] Carregando dados...")
-# Carrega todos os dados
-train_dataset, test_dataset = load_mnist_data()
-# Particiona
-NUM_CLIENTS = 10
-client_partitions = partition_data(train_dataset, num_clients=NUM_CLIENTS)
+# --- 4. Carregar e Particionar os Dados ---
+print(f"[Cliente {CLIENT_ID}] Carregando e particionando dados...")
+# Carrega todos os dados (eles vêm do cache do Hugging Face)
+train_dataset, test_dataset = load_data()
 
-# Pega apenas a partição deste cliente
-my_train_data = client_partitions[CLIENT_ID]
+# Particiona os dados de TREINO
+# .shard() é o jeito do Hugging Face de dividir o dataset
+# Cada cliente pega sua própria "fatia"
+my_train_data = train_dataset.shard(
+    num_shards=NUM_CLIENTS, 
+    index=CLIENT_ID
+)
 
-# (Cada cliente vai avaliar no dataset de teste INTEIRO)
+# Todos os clientes usam o mesmo dataset de TESTE (validação)
 my_test_data = test_dataset 
+
+print(f"[Cliente {CLIENT_ID}] Dados prontos. Amostras de treino: {len(my_train_data)}")
 
 # --- 5. Instanciar e Iniciar o Cliente Flower ---
 print(f"[Cliente {CLIENT_ID}] Conectando ao servidor em 127.0.0.1:8080...")
 
-# Cria a instância da sua classe FlowerClient
+# Cria a instância da sua classe FlowerClient (V2)
 client_app = FlowerClient(model, my_train_data, my_test_data)
 
-# Inicia o cliente NumPy
-fl.client.start_numpy_client(
+# Inicia o cliente (usando a nova API 'start_client' para evitar warnings)
+fl.client.start_client(
     server_address="127.0.0.1:8080", # Endereço do servidor
-    client=client_app,
+    client=client_app.to_client(),  # Converte o NumPyClient para um Client
 )
 
 print(f"[Cliente {CLIENT_ID}] Finalizado.")

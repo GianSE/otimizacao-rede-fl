@@ -1,115 +1,166 @@
+# Hack para o erro de DLL (SEMPRE no topo)
+import os
+os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
+
 import torch
-import torch.nn as nn
-import torch.optim as optim
+import flwr as fl
+import math
 from torch.utils.data import DataLoader
-import flwr as fl # Flower
+from torch.optim import AdamW                 # <-- CORREÇÃO AQUI
+from transformers import get_scheduler       # Otimizadores para Transformers
 
-# Importando o que você já fez
-from model_definition import SimpleCNN
+# Importando suas peças
+from model_definition import load_model_and_tokenizer
 
-# Define o dispositivo (vai usar CPU no seu caso)
+# Define o dispositivo
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-# --- Lógica de Treino/Teste (Adaptada da Semana 5) ---
-# Estas são as funções que o *cliente* vai usar em seus *dados locais*
+# --- Lógica de Treino/Teste (Adaptada para GenAI) ---
 
 def train(model, train_loader, epochs):
-    """Treina o modelo no dataset local do cliente."""
+    """Treina o modelo de linguagem no dataset local do cliente."""
     model.train()
-    loss_fn = nn.CrossEntropyLoss()
-    optimizer = optim.Adam(model.parameters(), lr=0.01) # Mesmo LR do baseline
+    
+    # Otimizador padrão para Transformers
+    optimizer = AdamW(model.parameters(), lr=5e-5) 
+    
+    # Agendador de taxa de aprendizado
+    num_training_steps = epochs * len(train_loader)
+    lr_scheduler = get_scheduler(
+        "linear",
+        optimizer=optimizer,
+        num_warmup_steps=0,
+        num_training_steps=num_training_steps,
+    )
+    
+    print(f"Iniciando treino local por {epochs} época(s)...")
     
     for epoch in range(epochs):
-        for data, target in train_loader:
-            data, target = data.to(DEVICE), target.to(DEVICE)
+        for batch in train_loader:
+            # Envia o batch para o dispositivo
+            batch = {k: v.to(DEVICE) for k, v in batch.items()}
+            
+            # 1. Zera os gradientes
             optimizer.zero_grad()
-            output = model(data)
-            loss = loss_fn(output, target)
+            
+            # 2. Forward pass (Predição)
+            outputs = model(**batch)
+            loss = outputs.loss
+            
+            # 3. Backward pass (Cálculo dos gradientes)
             loss.backward()
+            
+            # 4. Atualiza os pesos
             optimizer.step()
+            lr_scheduler.step()
+
+    print(f"Treino local concluído. Perda (Loss) final: {loss.item():.4f}")
 
 def test(model, test_loader):
-    """Avalia o modelo no dataset de teste local do cliente."""
+    """
+    Avalia o modelo no dataset de teste local.
+    Métrica: Perplexidade (quanto menor, melhor).
+    """
     model.eval()
-    loss_fn = nn.CrossEntropyLoss()
-    correct = 0
-    total_loss = 0.0
-    num_examples = 0
+    total_loss = 0
+    num_batches = 0
+    
+    print("Iniciando avaliação local...")
     
     with torch.no_grad():
-        for data, target in test_loader:
-            data, target = data.to(DEVICE), target.to(DEVICE)
-            output = model(data)
-            total_loss += loss_fn(output, target).item() * len(target)
-            pred = output.argmax(dim=1, keepdim=True)
-            correct += pred.eq(target.view_as(pred)).sum().item()
-            num_examples += len(target)
+        for batch in test_loader:
+            batch = {k: v.to(DEVICE) for k, v in batch.items()}
             
-    accuracy = correct / num_examples
-    avg_loss = total_loss / num_examples
-    return avg_loss, accuracy, num_examples
+            outputs = model(**batch)
+            
+            total_loss += outputs.loss.item()
+            num_batches += 1
+            
+    # Calcula a Perda (Loss) média
+    avg_loss = total_loss / num_batches
+    
+    # Perplexidade é o exponencial da perda média
+    try:
+        perplexity = math.exp(avg_loss)
+    except OverflowError:
+        perplexity = float("inf")
+        
+    print(f"Avaliação local concluída. Perda Média: {avg_loss:.4f}, Perplexidade: {perplexity:.4f}")
+    
+    return avg_loss, perplexity, len(test_loader.dataset)
 
-# --- Definição do Cliente Flower ---
+# --- Definição do Cliente Flower (Adaptado) ---
 
 class FlowerClient(fl.client.NumPyClient):
     """
-    Define a lógica do cliente FL.
+    Define a lógica do cliente FL para o modelo de linguagem.
     """
     def __init__(self, model, train_dataset, test_dataset):
         self.model = model
-        self.train_loader = DataLoader(train_dataset, batch_size=32, shuffle=True)
-        self.test_loader = DataLoader(test_dataset, batch_size=32, shuffle=False)
+        
+        # BATCH_SIZE precisa ser pequeno (ex: 4 ou 8)
+        self.train_loader = DataLoader(train_dataset, batch_size=4, shuffle=True)
+        self.test_loader = DataLoader(test_dataset, batch_size=4)
 
     def get_parameters(self, config):
         """Retorna os pesos atuais do modelo."""
         print("[Cliente] Enviando parâmetros para o servidor.")
-        # Pega os parâmetros do modelo PyTorch e converte para uma lista NumPy
         return [val.cpu().numpy() for _, val in self.model.state_dict().items()]
 
     def set_parameters(self, parameters):
         """Atualiza o modelo local com os pesos vindos do servidor."""
         print("[Cliente] Recebendo parâmetros do servidor.")
-        # Converte a lista NumPy de volta para o state_dict do PyTorch
         params_dict = zip(self.model.state_dict().keys(), parameters)
         state_dict = {k: torch.tensor(v) for k, v in params_dict}
         self.model.load_state_dict(state_dict, strict=True)
 
     def fit(self, parameters, config):
-        """
-        1. Recebe os parâmetros do servidor.
-        2. Treina o modelo localmente.
-        3. Retorna os novos parâmetros para o servidor.
-        """
-        print("[Cliente] Treinando localmente...")
-        self.set_parameters(parameters) # Atualiza o modelo com os pesos globais
+        """Treina o modelo localmente."""
+        print("[Cliente] Iniciando 'fit' (treinamento local)...")
+        self.set_parameters(parameters) 
         
-        # Treina o modelo (ex: 1 época local)
         train(self.model, self.train_loader, epochs=1) 
         
-        # Retorna os parâmetros atualizados e o número de exemplos de treino
         return self.get_parameters(config={}), len(self.train_loader.dataset), {}
 
     def evaluate(self, parameters, config):
-        """
-        1. Recebe os parâmetros do servidor.
-        2. Avalia o modelo nos dados de teste locais.
-        3. Retorna os resultados da avaliação.
-        """
-        print("[Cliente] Avaliando localmente...")
-        self.set_parameters(parameters) # Atualiza com os pesos globais
+        """Avalia o modelo localmente."""
+        print("[Cliente] Iniciando 'evaluate' (avaliação local)...")
+        self.set_parameters(parameters) 
         
-        # Avalia
-        loss, accuracy, num_examples = test(self.model, self.test_loader)
+        loss, perplexity, num_examples = test(self.model, self.test_loader)
         
-        # Retorna os resultados para o servidor agregar
-        return loss, num_examples, {"accuracy": accuracy}
+        # Flower espera a 'loss' primeiro
+        return loss, num_examples, {"perplexity": perplexity}
 
-
-# O 'if __name__ == "__main__":' NÃO VAI RODAR NADA AINDA.
-# Este arquivo é apenas uma definição de classe.
-# Vamos usá-lo na Semana 7.
 
 if __name__ == '__main__':
-    print("Este é o script 'fl_client.py'.")
-    print("Ele define a classe FlowerClient, mas não inicia um cliente.")
-    print("Ele será importado e usado pelo script 'run_simulation.py' (Semana 7).")
+    # Teste rápido para o fl_client.py
+    
+    print("--- Testando o fl_client.py ---")
+    
+    print("Carregando modelo e tokenizer...")
+    model, _ = load_model_and_tokenizer()
+    model.to(DEVICE)
+    
+    print("Carregando dados (versão de teste)...")
+    from data_loader import load_data
+    train_data, test_data = load_data()
+    
+    # Pega subconjuntos pequenos para um teste rápido
+    dummy_train = train_data.select(range(20))
+    dummy_test = test_data.select(range(10))
+
+    print("Iniciando cliente de teste...")
+    client_teste = FlowerClient(model, dummy_train, dummy_test)
+    
+    print("\nTestando client.fit()...")
+    params_iniciais = client_teste.get_parameters(config={})
+    params_novos, num_exemplos, _ = client_teste.fit(params_iniciais, config={})
+    print(f"Fit concluído. {num_exemplos} amostras processadas.")
+
+    print("\nTestando client.evaluate()...")
+    loss, num_ex, metrics = client_teste.evaluate(params_novos, config={})
+    print(f"Evaluate concluído. Loss: {loss:.4f}, Perplexity: {metrics['perplexity']:.4f}")
+    
+    print("\n--- Teste de fl_client.py concluído com sucesso! ---")
