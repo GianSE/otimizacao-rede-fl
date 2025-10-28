@@ -1,105 +1,99 @@
-import torch
-import torch.nn as nn
-import torch.optim as optim
-from torch.utils.data import DataLoader
+# baseline_training_tf.py
 
-# Importando o que você já fez:
-from data_loader import load_mnist_data
-from model_definition import SimpleCNN
+import tensorflow as tf
+import math
 
-def train(model, train_loader, optimizer, loss_fn, device):
-    """
-    Executa uma época de treinamento.
-    """
-    model.train() # Coloca o modelo em modo de treinamento
-    
-    for batch_idx, (data, target) in enumerate(train_loader):
-        # Envia dados e rótulos para o dispositivo (CPU ou GPU)
-        data, target = data.to(device), target.to(device)
-        
-        # 1. Zera os gradientes
-        optimizer.zero_grad()
-        
-        # 2. Faz a predição (forward pass)
-        output = model(data)
-        
-        # 3. Calcula a perda (loss)
-        loss = loss_fn(output, target)
-        
-        # 4. Calcula os gradientes (backward pass)
-        loss.backward()
-        
-        # 5. Atualiza os pesos
-        optimizer.step()
-        
-        if batch_idx % 100 == 0:
-            print(f"Batch [{batch_idx}/{len(train_loader)}]\tLoss: {loss.item():.6f}")
+# Importando as funções refatoradas para TensorFlow
+from data_loader import load_data
+from model_definition import load_model_and_tokenizer
 
-def test(model, test_loader, loss_fn, device):
+# --- Helper (copiado do fl_client.py) ---
+# Necessário para converter o dataset HF para o formato do Keras
+
+def create_tf_dataset(dataset, batch_size, shuffle=False):
     """
-    Avalia o modelo no dataset de teste.
+    Converte um dataset do Hugging Face (com formato "tf") 
+    em um tf.data.Dataset pronto para o Keras (model.fit).
     """
-    model.eval() # Coloca o modelo em modo de avaliação (desliga dropout, etc.)
-    test_loss = 0
-    correct = 0
     
-    # 'with torch.no_grad()' desliga o cálculo de gradientes
-    # para economizar memória e acelerar a avaliação
-    with torch.no_grad():
-        for data, target in test_loader:
-            data, target = data.to(device), target.to(device)
-            output = model(data)
-            
-            # Soma a perda do batch
-            test_loss += loss_fn(output, target).item()
-            
-            # Pega o índice da classe com maior probabilidade (a predição)
-            pred = output.argmax(dim=1, keepdim=True)
-            
-            # Compara a predição com o rótulo verdadeiro
-            correct += pred.eq(target.view_as(pred)).sum().item()
-            
-    test_loss /= len(test_loader.dataset)
-    accuracy = 100. * correct / len(test_loader.dataset)
+    def format_batch_for_keras(batch):
+        # Os modelos TF da Hugging Face esperam as features
+        # como um dicionário no primeiro argumento (x)
+        features = {
+            "input_ids": batch["input_ids"],
+            "attention_mask": batch["attention_mask"]
+        }
+        # E os rótulos como o segundo argumento (y)
+        labels = batch["labels"]
+        return features, labels
     
-    print(f"\nResultado do Teste:")
-    print(f"  Perda média: {test_loss:.4f}")
-    print(f"  Acurácia: {correct}/{len(test_loader.dataset)} ({accuracy:.2f}%)\n")
-    return accuracy
+    if shuffle:
+        dataset = dataset.shuffle(seed=42)
+        
+    tf_ds = dataset.to_tf_dataset(
+        columns=["input_ids", "attention_mask", "labels"],
+        batch_size=batch_size,
+        collate_fn=None 
+    )
+    
+    return tf_ds.map(format_batch_for_keras)
+
+# --- Fim do Helper ---
 
 if __name__ == '__main__':
     
     # --- Configurações ---
-    NUM_EPOCHS = 5 # Quantas vezes vamos rodar o dataset completo
-    BATCH_SIZE = 64
-    LEARNING_RATE = 0.01
+    NUM_EPOCHS = 3 # O treino centralizado pode rodar por mais épocas
+    BATCH_SIZE = 8 # Maior que no FL, já que não temos 10 modelos ao mesmo tempo
+    LEARNING_RATE = 5e-5 # Padrão para Transformers
     
-    # Define o dispositivo (vai usar CPU no seu caso)
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    print(f"Usando dispositivo: {device}")
+    print("--- Iniciando Treinamento Centralizado (Baseline) com TensorFlow ---")
+
+    # --- 1. Carregar Dados ---
+    print("Carregando e processando dados...")
+    train_dataset, test_dataset = load_data()
     
-    # --- 1. Carregar Dados (Semana 2) ---
-    train_dataset, test_dataset = load_mnist_data()
+    # Converte os datasets para tf.data.Dataset (formato Keras)
+    tf_train_data = create_tf_dataset(train_dataset, BATCH_SIZE, shuffle=True)
+    tf_test_data = create_tf_dataset(test_dataset, BATCH_SIZE, shuffle=False)
+
+    print(f"Dados prontos. Amostras de treino: {len(train_dataset)}, Amostras de teste: {len(test_dataset)}")
+
+    # --- 2. Carregar Modelo ---
+    print("Carregando modelo GenAI (TensorFlow)...")
+    model, _ = load_model_and_tokenizer()
     
-    # DataLoader prepara os dados em "lotes" (batches)
-    train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True)
-    test_loader = DataLoader(test_dataset, batch_size=BATCH_SIZE, shuffle=False)
+    # --- 3. Compilar o Modelo (Keras) ---
+    print("Compilando o modelo Keras...")
+    optimizer = tf.keras.optimizers.Adam(learning_rate=LEARNING_RATE)
     
-    # --- 2. Carregar Modelo (Semana 4) ---
-    model = SimpleCNN().to(device)
+    # Modelos da HF no Keras calculam a perda internamente
+    # quando 'labels' são fornecidos.
+    model.compile(optimizer=optimizer)
     
-    # --- 3. Definir Otimizador e Perda ---
-    # Função de perda (ótima para classificação)
-    loss_fn = nn.CrossEntropyLoss()
+    # --- 4. Loop de Treinamento (Keras .fit) ---
+    print(f"\n--- Iniciando Treinamento por {NUM_EPOCHS} épocas ---")
     
-    # Otimizador (Adam é uma escolha robusta e popular)
-    optimizer = optim.Adam(model.parameters(), lr=LEARNING_RATE)
-    
-    # --- 4. Loop de Treinamento ---
-    print("\n--- Iniciando Treinamento Centralizado (Baseline) ---")
-    for epoch in range(1, NUM_EPOCHS + 1):
-        print(f"\n--- Época {epoch}/{NUM_EPOCHS} ---")
-        train(model, train_loader, optimizer, loss_fn, device)
-        test(model, test_loader, loss_fn, device)
+    model.fit(
+        tf_train_data,
+        epochs=NUM_EPOCHS,
+        validation_data=tf_test_data,
+        verbose=1
+    )
         
-    print("--- Treinamento Baseline Concluído ---")
+    print("\n--- Treinamento Baseline Concluído ---")
+
+    # --- 5. Avaliação Final ---
+    print("Avaliando o modelo final no dataset de teste...")
+    
+    # .evaluate() retorna a perda (loss)
+    final_loss = model.evaluate(tf_test_data)
+    
+    try:
+        final_perplexity = math.exp(final_loss)
+    except OverflowError:
+        final_perplexity = float("inf")
+
+    print("\n--- Resultado Final (Baseline) ---")
+    print(f"  Perda (Loss) Média: {final_loss:.4f}")
+    print(f"  Perplexidade: {final_perplexity:.4f} (Menor é melhor)")
