@@ -12,13 +12,15 @@ deactivate
 
 ## Estrutura dos Arquivos
 
-* `data_loader.py`: Carrega e normaliza o dataset MNIST.
-* `data_partitioner.py`: Divide o dataset de treino em N partições (uma para cada cliente).
-* `model_definition.py`: Define a arquitetura da `SimpleCNN` usada no projeto.
-* `baseline_training.py`: Script para treinar o modelo de forma centralizada (nosso baseline).
-* `fl_client.py`: Define a classe `FlowerClient` que contém a lógica de treino/avaliação do cliente.
-* `server.py`: O servidor FL que orquestra as rodadas de agregação.
-* `client_runner.py`: O script que simula um cliente individual que se conecta ao servidor.
+* `baixa_modelo.py`: Script de configuração (executa uma vez para baixar o modelo).
+* `client_runner.py`: Quem inicia os clientes.
+* `data_loader.py`: Carrega os dados processados do disco.
+* `fl_client.py`: A lógica de treino (loop do PyTorch).
+* `model_definition.py`: Carrega o modelo GPT-2.
+* `preparar_dados.py`: Script de configuração (executa uma vez para criar o dataset).
+* `server.py`: O cérebro da operação.
+
+* `exec_train.bat`: Executa venv, server e cliente em sequencia
 
 ## Como Instalar
 
