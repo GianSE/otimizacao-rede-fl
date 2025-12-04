@@ -48,3 +48,25 @@ Enquanto o servidor está rodando, abra um segundo terminal e execute o seguinte
 ```bash
 foreach ($i in 0..9) { Start-Process python -ArgumentList "client_runner.py $i" }
 ```
+
+Sequencia de scripts pra usar o projeto
+
+```bash
+# 1. Cria o ambiente virtual
+python -m venv venv
+
+# 2. Ativa o ambiente
+./venv/scripts/activate
+
+# 3. Instala as dependências listadas
+pip install -r requirements.txt
+
+# 4. Baixa o modelo distilgpt2 e salva na pasta './meu_modelo_torch'
+python baixar_modelo.py
+
+# 5. Baixa o dataset, processa e salva na pasta './meu_dataset_processado'
+python preparar_dados.py
+
+# 6. Executa o launcher automático
+./exec_train.py
+```
