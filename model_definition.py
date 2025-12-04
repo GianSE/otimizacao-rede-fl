@@ -1,7 +1,8 @@
 import torch
 from transformers import GPT2LMHeadModel, GPT2Tokenizer
 
-MODEL_NAME = "distilgpt2" # Um modelo de linguagem pequeno e rápido
+# MODEL_NAME = "distilgpt2" # Um modelo de linguagem pequeno e rápido
+MODEL_NAME = "./meu_modelo_torch"
 
 def load_model_and_tokenizer():
     """

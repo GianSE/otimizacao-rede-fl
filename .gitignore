@@ -1,3 +1,5 @@
 __pycache__
 data
 venv
+meu_modelo_torch
+meu_dataset_processado
