@@ -60,6 +60,7 @@ client_app = FlowerClient(model, my_train_data, my_test_data)
 fl.client.start_client(
     server_address="127.0.0.1:8080", # Endereço do servidor
     client=client_app.to_client(),  # Converte o NumPyClient para um Client
+    grpc_max_message_length=1024*1024*1024
 )
 
 print(f"[Cliente {CLIENT_ID}] Finalizado.")

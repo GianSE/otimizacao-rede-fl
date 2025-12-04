@@ -19,15 +19,15 @@ def weighted_average_perplexity(metrics: list[tuple[int, Metrics]]) -> Metrics:
     return {"perplexity": aggregated_perplexity}
 
 print("Iniciando o Servidor FL (Versão GenAI) em 127.0.0.1:8080")
-print("Aguardando 10 clientes se conectarem...")
+print("Aguardando 2 clientes se conectarem...")
 
 # Define a estratégia (FedAvg)
 strategy = fl.server.strategy.FedAvg(
     fraction_fit=1.0,           # Usar 100% dos clientes para treino
     fraction_evaluate=1.0,    # Usar 100% dos clientes para avaliação
-    min_available_clients=10,   # Esperar TODOS os 10 clientes conectarem
-    min_fit_clients=10,         # FORÇAR o uso de 10 clientes para treino
-    min_evaluate_clients=10,    # FORÇAR o uso de 10 clientes para avaliação
+    min_available_clients=2,   # Esperar TODOS os 10 clientes conectarem
+    min_fit_clients=2,         # FORÇAR o uso de 10 clientes para treino
+    min_evaluate_clients=2,    # FORÇAR o uso de 10 clientes para avaliação
     
     # DIZ AO SERVIDOR PARA USAR NOSSA NOVA FUNÇÃO DE MÉTRICA:
     evaluate_metrics_aggregation_fn=weighted_average_perplexity, 
@@ -38,6 +38,7 @@ history = fl.server.start_server(
     server_address="127.0.0.1:8080", 
     config=fl.server.ServerConfig(num_rounds=3), # 3 rodadas (GenAI é mais lento)
     strategy=strategy,
+    grpc_max_message_length=1024*1024*1024
 )
 
 print("Servidor finalizado.")
