@@ -1,6 +1,6 @@
-# data_loader.py (Versão Otimizada)
+# data_loader.py (Versão Otimizada e Corrigida)
 import torch
-from datasets import load_from_disk # <--- A mágica está aqui
+from datasets import load_from_disk
 
 # Nome da pasta onde salvamos os dados
 PASTA_DATASET = "./meu_dataset_processado"
@@ -23,12 +23,18 @@ def load_data():
         test_dataset = tokenized_datasets["validation"]
         
         print(f"Dados carregados! Treino: {len(train_dataset)}, Teste: {len(test_dataset)}")
-        return train_dataset, test_dataset
+        
+        # --- CORREÇÃO: Retorna um Dicionário ---
+        return {
+            "train": train_dataset,
+            "test": test_dataset
+        }
         
     except FileNotFoundError:
         raise Exception(f"Erro: A pasta '{PASTA_DATASET}' não existe. Rode 'python preparar_dados.py' primeiro!")
 
 if __name__ == '__main__':
     # Teste rápido
-    train, test = load_data()
-    print(f"Shape do primeiro item: {train[0]['input_ids'].shape}")
+    dados = load_data()
+    print(f"Chaves do dicionário: {dados.keys()}")
+    print(f"Shape do primeiro item de treino: {dados['train'][0]['input_ids'].shape}")

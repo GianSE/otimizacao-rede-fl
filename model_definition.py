@@ -1,48 +1,42 @@
 import torch
 from transformers import GPT2LMHeadModel, GPT2Tokenizer
+from peft import LoraConfig, get_peft_model, TaskType
 
-# MODEL_NAME = "distilgpt2" # Um modelo de linguagem pequeno e rápido
+# Aponta para sua pasta local
 MODEL_NAME = "./meu_modelo_torch"
 
 def load_model_and_tokenizer():
     """
-    Carrega o modelo de linguagem pré-treinado e o tokenizer
-    da Hugging Face.
+    Carrega o modelo base e o tokenizer.
     """
-    
-    # 1. Carregar o Tokenizer
-    # O tokenizer converte "olá mundo" em [31373, 995]
     tokenizer = GPT2Tokenizer.from_pretrained(MODEL_NAME)
-    
-    # Modelos GPT-2 não têm um token de "padding" (preenchimento) por padrão.
-    # Vamos defini-lo como o token "end of sentence" (fim da sentença).
-    # Isso é necessário para treinar em lotes (batches).
     tokenizer.pad_token = tokenizer.eos_token
     
-    # 2. Carregar o Modelo
-    # GPT2LMHeadModel = "Language Model Head", o que significa que ele
-    # é feito para prever a próxima palavra (GenAI).
     model = GPT2LMHeadModel.from_pretrained(MODEL_NAME)
-    
-    print(f"Modelo pré-treinado '{MODEL_NAME}' e tokenizer carregados.")
-    
     return model, tokenizer
 
+def apply_lora(model):
+    """
+    Aplica a adaptação LoRA no modelo.
+    Isso reduz os parâmetros treináveis de 82 milhões para ~300 mil.
+    """
+    peft_config = LoraConfig(
+        task_type=TaskType.CAUSAL_LM, 
+        inference_mode=False, 
+        r=8,            # "Rank" da matriz (quanto maior, mais inteligente, mas mais pesado)
+        lora_alpha=32,  # Fator de escala
+        lora_dropout=0.1
+    )
+    
+    # Envolve o modelo base com a configuração LoRA
+    lora_model = get_peft_model(model, peft_config)
+    
+    # Imprime quanto economizamos
+    lora_model.print_trainable_parameters()
+    
+    return lora_model
+
 if __name__ == '__main__':
-    # Teste rápido para ver se funciona
-    model, tokenizer = load_model_and_tokenizer()
-    
-    # Vamos testar
-    prompt = "Olá, tudo bem?"
-    print(f"\nTestando o modelo com o prompt: '{prompt}'")
-    
-    # Converte o texto em números (IDs)
-    inputs = tokenizer(prompt, return_tensors="pt")
-    
-    # Gera 15 novos tokens (palavras)
-    output_ids = model.generate(inputs.input_ids, max_length=15)
-    
-    # Converte os IDs de volta em texto
-    output_text = tokenizer.decode(output_ids[0], skip_special_tokens=True)
-    
-    print(f"Resposta gerada (antes do treino): '{output_text}'")
+    # Teste para ver a redução
+    model, _ = load_model_and_tokenizer()
+    lora_model = apply_lora(model)
